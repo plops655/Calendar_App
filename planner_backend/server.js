@@ -417,7 +417,7 @@ app.get("/v1/calendar/:userId/:calendarId", async(req, res) => {
     const userId = req.params.userId
     const calendarId = req.params.calendarId
     try {
-
+        
     } catch(err) {
         
     } finally {
