@@ -131,7 +131,10 @@ const calendarInfo = `
   userId INTEGER,
   calendarId INTEGER,
   numEvents INTEGER,
-  minId INTEGER
+  minId INTEGER,
+  maxId INTEGER,
+  timezone VARCHAR(4),
+  beginTime VARCHAR(26)
 `
 
 createTable('user_schema_meta', 'calendars', calendarInfo)
