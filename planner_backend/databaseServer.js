@@ -131,33 +131,38 @@ const calendarInfo = `
   userId INTEGER,
   calendarId INTEGER,
   numEvents INTEGER,
-  minId INTEGER,
-  maxId INTEGER,
   timezone VARCHAR(4),
-  beginTime VARCHAR(26)
 `
 
 createTable('user_schema_meta', 'calendars', calendarInfo)
+
+const calendarMetaInfo = `
+  userId INTEGER,
+  calendarId INTEGER,
+  eventId INTEGER,
+  timeStamp VARCHAR(26)
+  edges VARCHAR(26)[],
+  intervalsLasting INTEGER
+`
+createTable('user_schema_meta', 'calendars_meta', calendarMetaInfo)
 
 // changed eventId from SERIAL -> INTEGER
 const eventInfo = `
   userId INTEGER,
   calendarId INTEGER,
   eventId INTEGER,
+  tiedEvents INTEGER[],
   isFixed BOOLEAN,
   isRecurring BOOLEAN,
   PRIMARY KEY (userId, calendarId, eventId)
 `
-createTable('user_meta_schema', 'events', eventInfo)
+createTable('user_schema_meta', 'events', eventInfo)
 
-const eventsMeta = `
+const recurringEventsInfo = `
   userId INTEGER,
   calendarId INTEGER,
   eventId INTEGER,
-  start INTEGER,
-  finish INTEGER,
   repetition INTEGER,
-  exceptons INTEGER[] 
 `
-createTable('user_meta_schema', 'events_meta', eventsMeta)
+createTable('user_schema_meta', 'recurringEvents', eventsMeta)
 
