@@ -49,6 +49,15 @@ const userDBConfig = {
 const pool = new Pool(userDBConfig)
 const timezone = "America/Los Angeles"
 
+// Pusher config 
+
+const pusher = new Pusher({
+    appId: process.env.APP_ID,
+    key: process.env.KEY,
+    secret: process.env.SECRET,
+    cluster: process.env.CLUSTER
+})
+
 // user API
 
 app.get("/v1/user/:userId/:type", async (req, res) => {
@@ -410,6 +419,31 @@ function findEdges(startTime, endTime, sectionLength) { // sectionLength in mins
     return edgeArr
 }
 
+async function insertIntoEvents(events, currentEvent, eventId, userId, calendarId) {
+    const eventsLength = events.length
+    let start = 0
+    let end = eventsLength - 1
+    let middle;
+    const client = await pool.connect()
+    // find index i where events[i] <= currentEvent < events[i+1]
+    while (end > start) {
+
+        middle = Math.floor((start + end) / 2)
+        const timeQuery = await client.query(`SELECT timeStamp, intervalsLasting FROM user_schema_meta.calendars_meta WHERE 
+        userId=$1 AND calendarId=$2 AND eventId = $3`, [userId, calendarId, events[middle]])
+        const timeStamp = timeQuery.timestamp
+        const intervalslasting = timeQuery.intervalslasting
+
+        if (currentEvent > timeStamp) {
+            start = middle + 1
+        } else {
+            end = middle 
+        }
+    }
+
+
+}
+
 app.post("/v1/calendar/post", async(req, res) => {
     const client = await pool.connect()
     const { userId, calendarInfo } = req.body
@@ -420,7 +454,7 @@ app.post("/v1/calendar/post", async(req, res) => {
         await client.query(`INSERT INTO user_schema_meta.calendars (userId, calendarId, numEvents, timezone) VALUES ($1, $2, $3, $4)`, [userId, calendarId, calendarInfo.length, timezone])
         for (let i = 0; i < calendarInfo.length; i += 1) {
             const e = calendarInfo[i]
-            const { tiedEvents, isFixed, isRecurring, start, finish, repetition } = e
+            const { tiedEvents, isFixed, isRecurring, start, finish, repetition, timeout } = e
             
             const date = DateTime.fromISO(start)
             
@@ -428,8 +462,8 @@ app.post("/v1/calendar/post", async(req, res) => {
             ($1, $2, $3, $4, $5, $6)`, [userId, calendarId, i, date, findEdges(start, finish, 24 * 60), findIntervals(start, finish)])
             await client.query(`INSERT INTO user_schema_meta.events (userId, calendarId, eventId, tiedEvents, isFixed, isRecurring) VALUES
             ($1, $2, $3, $4, $5, $6)`, [userId, calendarId, i, tiedEvents, isFixed, isRecurring])
-            await client.query(`INSERT INTO user_schema_meta.recurringEvents (userId, calendarId, eventId, repetition) VALUES
-            ($1, $2, $3, $4)`, [userId, calendarId, i, repetition])
+            await client.query(`INSERT INTO user_schema_meta.recurringEvents (userId, calendarId, eventId, repetition, timeout) VALUES
+            ($1, $2, $3, $4, $5)`, [userId, calendarId, i, repetition, timeout])
         }
         res.status(200).send("Successfully added calendar")
     } catch(err) {
@@ -439,21 +473,22 @@ app.post("/v1/calendar/post", async(req, res) => {
     }
 })
 
+// returns list of eventIds such that each eventId corresponds to events done in order of time. Last element may extend out of window.
 app.get("/v1/calendar/:userId/:calendarId", async(req, res) => {
     const client = await pool.connect()
-    const userId = req.params.userId
-    const calendarId = req.params.calendarId
+    const { userId, calendarId } = req.params
     const { window, desiredDate } = req.body
 
     try {
         const desiredTime = DateTime.fromISO(desiredDate).zone(timezone)
         const startDate = DateTime.fromISO(desiredTime.minus({ daysOfWeek: desiredTime.weekday }).toISODate()).zone(timezone)
+        const endDate = startDate.plus({days: window})
         
         // event ids
         let events = [] 
 
         let currentDate = startDate
-        while (currentDate < startDate.plus({days: window})) {
+        while (currentDate < endDate) {
             const calendarMetaQuery = await client.query(`SELECT eventId, intervalsLasting, timeStamp FROM user_schema_meta.calendars_meta WHERE
             userId=$1 AND calendarId=$2 AND (timeStamp=$3 OR $3 = ANY(edges))`, [userId, calendarId, currentDate.toISO()])
             const calendarMetaInfo = calendarMetaQuery.rows[0]
@@ -463,8 +498,37 @@ app.get("/v1/calendar/:userId/:calendarId", async(req, res) => {
 
             const eventBegin = DateTime.fromISO(timeStamp).zone(timezone)
             currentDate = eventBegin.plus({minutes: intervalsLasting * 15})
-
             events.push(eventId)
+        }
+
+        const eventQuery = await client.query(`SELECT eventId, repetition, timeout FROM user_schema_meta.recurringEvents WHERE userId=$1 AND calendarId=$2`, [userId, calendarId])
+        const eventsInfo = eventQuery.rows.map(row => [row.eventid, row.timeout])
+        for (const eventInfo in eventsInfo) {
+            // check start before end and timeout after start of window
+            // while loop over every instance within window and insert into events with binary search
+
+            const eventId = eventInfo.eventid
+            const timeout = eventInfo.timeout
+            const repetition = eventInfo.repetition
+
+            const calendarMetaQuery = await client.query(`SELECT timeStamp, intervalsLasting FROM user_schema_meta.calendars_meta WHERE 
+            userId=$1 AND calendarId=$2 AND eventId=$3`, [userId, calendarId, eventId])
+            const calendarMetaInfo = calendarMetaQuery.rows[0]
+            const timeStamp = DateTime.fromISO(calendarMetaInfo.timestamp).zone(timezone)
+            const intervalsLasting = calendarMetaInfo.intervalslasting
+
+            if (timeStamp >= endDate || timeout <= startDate) {
+                continue
+            }
+
+            let currentEvent = timeStamp
+            while (currentEvent < timeout && currentEvent < endDate) { // event in window
+                if (currentEvent < startDate) {
+                    currentEvent = currentEvent.plus({minutes: repetition})
+                    continue
+                }
+                insertIntoEvents(events, currentEvent, eventId, userId, calendarId)
+            } 
         }
         res.status(200).send(events)
     } catch(err) {
@@ -472,6 +536,76 @@ app.get("/v1/calendar/:userId/:calendarId", async(req, res) => {
     } finally {
         client.release()
     }
+})
+
+// update get
+
+app.delete("/v1/calendar/delete/:userId/:calendarId/:eventId/:instance", async(req, res) => {
+    const {userId, calendarId, eventId, instance } = req.params
+    // instance is an ISO string
+    const client = await pool.connect()
+    try {
+        const recurQuery = await client.query(`SELECT isRecurring FROM user_schema_meta.events WHERE userId=$1 AND calendarId=$2 AND eventId=$3`,
+        [userId, calendarId, eventId])
+        const isRecurring = recurQuery.rows[0].isrecurring
+        if (isRecurring) {
+            await client.query(`UPDATE user_schema_meta.recurringEvents SET exceptions = ARRAY_APPEND(exceptions, $1) 
+            WHERE userId=$2 AND calendarId=$3 AND eventId=$4`, [instance, userId, calendarId, eventId])
+        } else {
+            await client.query(`
+            DO $$ 
+            DECLARE 
+                tiedEvent INTEGER;
+            BEGIN
+                FOR tiedEvent IN 
+                    SELECT unnest(tiedEvents) FROM user_schema_meta.events WHERE userId=$2 AND calendarId=$3 AND eventId=$1;
+                LOOP
+                    UPDATE user_schema_meta.events SET tiedEvents=ARRAY_REMOVE(tiedEvents, $1) WHERE userId=$2 AND calendarId=$3 AND eventId=tiedEvent;
+                END LOOP;
+                DELETE FROM user_schema_meta.events WHERE userId=$2 AND calendarId=$3 AND eventId=$1;
+            END $$`, [eventId, userId, calendarId])
+        }
+        res.status(200).send(`Deleted event from calendar \n 
+        ${{
+            calendarId: calendarId,
+            eventId: eventId,
+        }}`)
+    } catch(err) {
+        res.status(400).send(`Error occurred when deleting event \n ${err}`)
+        console.log(err)
+    } finally {
+        client.release()
+    }
+    
+})
+
+// after merge service
+app.delete("/v1/calendar/delete/:userId/:calendarId", async(req, res) => {
+
+})
+
+// merge API
+
+const mergeChannel = pusher.subscribe("mergeChannel")
+mergeChannel.bind("mergeEventCalendarLists", function(data) {
+
+})
+
+// must call python function 
+app.post("/v1/merge", async(req, res) => {
+    // calendarEventList: [{
+    //     userId: ,
+    //     calendarId: ,
+    //     eventId: ,
+    // }, ...]
+
+    // weightsList: [w_1, w_2, w_3, \ldots, w_n]
+
+    const { calendarEventList, weightsList } = req.body
+    pusher.trigger("mergeChannel", "mergeEventCalendarLists", {
+        calendarEventList: calendarEventList,
+        weightsList: weightsList
+    })
 })
 
 // login API

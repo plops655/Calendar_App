@@ -133,7 +133,6 @@ const calendarInfo = `
   numEvents INTEGER,
   timezone VARCHAR(4),
 `
-
 createTable('user_schema_meta', 'calendars', calendarInfo)
 
 const calendarMetaInfo = `
@@ -163,6 +162,15 @@ const recurringEventsInfo = `
   calendarId INTEGER,
   eventId INTEGER,
   repetition INTEGER,
+  timeout VARCHAR(26),
+  exceptions INTEGER[] DEFAULT []
 `
-createTable('user_schema_meta', 'recurringEvents', eventsMeta)
+createTable('user_schema_meta', 'recurringEvents', recurringEventsInfo)
 
+// denote a knot a data structure which ties together several events as the same
+const commonEventInfo = `
+  knotId INTEGER,
+  userIds INTEGER[],
+  calendarIds INTEGER[],
+  eventIds INTEGER[]
+`
