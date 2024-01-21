@@ -81,8 +81,10 @@ createSchema('user_meta_schema')
 // changed user table to include invitations
 // changed user table neighborsAndCounts JSONB[] -> JSONB
 // added calendars column 
+// users must specify group with greatest importance (Idea for later, create ordering of groups importances. Much more technical)
 const userInfo = `
   userId SERIAL PRIMARY KEY,
+  primaryGroup INTEGER,
   cliques INTEGER[],
   subCliques INTEGER[],
   free INTEGER[],
@@ -93,10 +95,14 @@ const userInfo = `
 `
 createTable('user_schema', 'users', userInfo)
 
+// Added globalEventIds column. Must add eventIds attribute to group API
+// 2-way relationship between events table and groups table.
+
 const groupInfo = `
   groupId SERIAL PRIMARY KEY,
   description VARCHAR(55),
   memberIds INTEGER[],
+  globalEventIds INTEGER[],
   type VARCHAR(55)
 `
 createTable('user_schema', 'groups', groupInfo)
@@ -135,24 +141,38 @@ const calendarInfo = `
 `
 createTable('user_schema_meta', 'calendars', calendarInfo)
 
+// added day and startInterval. Will edit to remove timeStamp. Need this way for algorithm since it is split into days and subdays
+// added unset, set status to capture events that user inputs, and which must be fixed by update algorithm
+// added event importance for update algo
 const calendarMetaInfo = `
   userId INTEGER,
   calendarId INTEGER,
   eventId INTEGER,
-  timeStamp VARCHAR(26)
+  setStatus BOOLEAN,
+  day VARCHAR(26),
+  startInterval INTEGER,
+  timeStamp VARCHAR(26) // GET RID OF AND REPLACE USES WITH DAY AND START INTERVAL
+  importance INTEGER,
   edges VARCHAR(26)[],
   intervalsLasting INTEGER
 `
 createTable('user_schema_meta', 'calendars_meta', calendarMetaInfo)
 
 // changed eventId from SERIAL -> INTEGER
+// added globalEventId column, groupIds column and 2-way relationship between group and events table
+// added deadline column
 const eventInfo = `
   userId INTEGER,
   calendarId INTEGER,
+  globalEventId INTEGER,
   eventId INTEGER,
+  groupIds INTEGER[],
   tiedEvents INTEGER[],
   isFixed BOOLEAN,
   isRecurring BOOLEAN,
+  importance INTEGER DEFAULT 5,
+  deadline VARCHAR(26),
+  description VARCHAR(55),
   PRIMARY KEY (userId, calendarId, eventId)
 `
 createTable('user_schema_meta', 'events', eventInfo)
@@ -167,10 +187,23 @@ const recurringEventsInfo = `
 `
 createTable('user_schema_meta', 'recurringEvents', recurringEventsInfo)
 
-// denote a knot a data structure which ties together several events as the same
-const commonEventInfo = `
-  knotId INTEGER,
-  userIds INTEGER[],
-  calendarIds INTEGER[],
-  eventIds INTEGER[]
+const updateLedgerInfo = `
+  userId INTEGER,
+  calendarId INTEGER,
+  localEventId SERIAL,
+  groupIds INTEGER[],
+  tiedEvents INTEGER[],
+  isFixed BOOLEAN,
+  isRecurring BOOLEAN,
+  repetition INTEGER,
+  timeout VARCHAR(26),
+  exceptions INTEGER[] DEFAULT []
+  importance INTEGER DEFAULT 5,
+  deadline VARCHAR(26),
+  description VARCHAR(55),
+  timeStamp VARCHAR(26),
+  edges VARCHAR(26)[],
+  intervalsLasting INTEGER
 `
+
+createTable('user_schema_meta', 'updateLedger', updateLedgerInfo)

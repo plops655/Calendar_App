@@ -9,16 +9,12 @@ import * as path from 'path'
 const { Client, Pool } = pkg
 import  { fileURLToPath } from 'url'
 import authenticateCookie from "./authenticateCookie.js"
-import timestamp from "unix-timestamp"
 import { DateTime } from "luxon"
+import MaxHeapEvent from "./MaxHeap.js"
 
 // .env config
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-const utcOffset = 0
-const pstOffset = -28800
-const etOffset = -18000
 
 dotenv.config({
     override: true,
@@ -386,6 +382,7 @@ app.post("/v1/clique/joinRequest/:groupId", async (req, res) => {
 })
 
 // calendar API - only call during initialization
+// integrate importance API call for events
 
 function findIntervals(beginTime, timeStamp) {
     const secondsDifference = (new Date(timeStamp).getTime() - new Date(beginTime).getTime()) / 1000
@@ -454,14 +451,14 @@ app.post("/v1/calendar/post", async(req, res) => {
         await client.query(`INSERT INTO user_schema_meta.calendars (userId, calendarId, numEvents, timezone) VALUES ($1, $2, $3, $4)`, [userId, calendarId, calendarInfo.length, timezone])
         for (let i = 0; i < calendarInfo.length; i += 1) {
             const e = calendarInfo[i]
-            const { tiedEvents, isFixed, isRecurring, start, finish, repetition, timeout } = e
+            const { tiedEvents, isFixed, isRecurring, importance, description, start, finish, repetition, timeout } = e
             
             const date = DateTime.fromISO(start)
             
             await client.query(`INSERT INTO user_schema_meta.calendars_meta (userId, calendarId, eventId, timestamp, edges, intervalsLasting) VALUES 
             ($1, $2, $3, $4, $5, $6)`, [userId, calendarId, i, date, findEdges(start, finish, 24 * 60), findIntervals(start, finish)])
-            await client.query(`INSERT INTO user_schema_meta.events (userId, calendarId, eventId, tiedEvents, isFixed, isRecurring) VALUES
-            ($1, $2, $3, $4, $5, $6)`, [userId, calendarId, i, tiedEvents, isFixed, isRecurring])
+            await client.query(`INSERT INTO user_schema_meta.events (userId, calendarId, eventId, tiedEvents, isFixed, isRecurring, importance, description) VALUES
+            ($1, $2, $3, $4, $5, $6, $7, $8)`, [userId, calendarId, i, tiedEvents, isFixed, isRecurring, importance, description])
             await client.query(`INSERT INTO user_schema_meta.recurringEvents (userId, calendarId, eventId, repetition, timeout) VALUES
             ($1, $2, $3, $4, $5)`, [userId, calendarId, i, repetition, timeout])
         }
@@ -481,7 +478,7 @@ app.get("/v1/calendar/:userId/:calendarId", async(req, res) => {
 
     try {
         const desiredTime = DateTime.fromISO(desiredDate).zone(timezone)
-        const startDate = DateTime.fromISO(desiredTime.minus({ daysOfWeek: desiredTime.weekday }).toISODate()).zone(timezone)
+        const startDate = DateTime.fromISO(desiredTime.minus({ day: desiredTime.weekday }).toISODate()).zone(timezone)
         const endDate = startDate.plus({days: window})
         
         // event ids
@@ -582,6 +579,173 @@ app.delete("/v1/calendar/delete/:userId/:calendarId/:eventId/:instance", async(r
 // after merge service
 app.delete("/v1/calendar/delete/:userId/:calendarId", async(req, res) => {
 
+})
+
+// update API
+
+// Eventually: maybe have cliques be able to choose subdays?
+
+// first index is min hour. second is max hour. 
+const subdays = {
+    sleep: [0, 7],
+    morning: [8, 12],
+    afternoon: [13, 18],
+    evening: [19, 23]
+}
+
+function mergeHelper(events, l, m, r) {
+    const L = new Array(m - l + 1)
+    const R = new Array(r - m)
+
+    for (let i = l; i <= m; i += 1) {
+        L[i - l] = events[i]
+    }
+    for (let j = m + 1; j <= R; j += 1) {
+        R[j - m - 1] = events[j]
+    }
+
+    let i = 0
+    let j = 0
+    let k = l
+    while (i < m - l + 1 && j < r - m) {
+        if (L[i].importance <= R[j].importance) {
+            events[k] = L[i]
+            i += 1
+        } else {
+            events[k] = R[j]
+            j += 1
+        }
+        k += 1
+    }
+
+    while (i < m - l + 1) {
+        events[k] = L[i]
+        i += 1
+        k += 1
+    }
+
+    while (j < r - m) {
+        events[k] = R[j]
+        j += 1
+        k += 1
+    }
+}
+
+function orderEventsByImportance(events, l, r) {
+    // least important event first
+    if (l >= r) {
+        return
+    }
+    const m = l + parseInt((r-1)/2)
+    orderEventsByImportance(events, l, m)
+    orderEventsByImportance(events, m+1, r)
+    mergeHelper(events, l, m, r)
+}
+
+function addToStack(events, stack) {
+    for (let event in events) {
+        stack.push(event)
+    }
+}
+
+function isImportant(importance) {
+    if (importance >= 5) {
+        return true
+    }
+    return false
+}
+
+function addEventToProperHeap(event, nightHeap, morningHeap, afternoonHeap, eveningHeap) {
+    const timestamp = DateTime.fromISO(event.desiredTime).zone(timezone)
+    const hour = timestamp.hour
+    
+    if (hour >= subdays.sleep[0] && hour <= subdays.sleep[1]) {
+        nightHeap.add(event)
+    } else if (hour >= subdays.morning[0] && hour <= subdays.morning[1]) {
+        morningHeap.add(event)
+    } else if (hour >= subdays.afternoon[0] && hour <= subdays.afternoon[1]) {
+        afternoonHeap.add(event)
+    } else if (hour >= subdays.evening[0] && hour <= subdays.evening[1]) {
+        eveningHeap.add(event)
+    }
+}
+
+app.post("/v1/update/", async(req, res) => {
+    // 'event': {
+    //     localEventId: int (for ledger)
+    //     deadline: (some text) 
+    //     description: "a",
+    //     desiredTime: str
+    //     -- must find edges --
+    //     intervalsLasting: int   
+    //     tiedEvents:[eventIds ...],
+    //     isFixed: bool,
+    //     isRecurring: bool,
+    //     importance: int default 5,
+    //     repetition: int,
+    //     timeout: int,
+    //     exceptions:["a", ...]
+    //     updateStatus: 'replacement' or 'mutation'. 
+
+    // }
+
+    // first add 'event' to ledger. Then 
+    // deal with replacements first. Finally
+    // think about mutations
+
+    // mutations cannot recur for now
+
+    // below is eventsList for mutations only
+
+    // eventsList: {
+    //     localEventId: int,
+    //     deadline: str,
+    //     desiredTime: str,
+    //     intervalsLasting: int,
+    //     importance: int,
+
+    // }
+
+    const { userId, calendarId, eventsList } = req.body
+    const client = await pool.connect()
+    // check if overlaps fixed task. If so, throw error
+    
+    // first address events for morning. Then afternoon. Then evening. Pop events with max importance from each of these heaps. Have separate heap containing displaced events.
+    const nightHeap = new MaxHeapEvent()
+    const morningHeap = new MaxHeapEvent()
+    const afternoonHeap = new MaxHeapEvent()
+    const eveningHeap = new MaxHeapEvent()
+    const displacedHeap = new MaxHeapEvent()
+
+    for (let event in eventsList) {
+        addEventToProperHeap(event, nightHeap, morningHeap, afternoonHeap, eveningHeap)
+    }
+
+    while (displacedHeap.size() <= 8) {
+        while (!morningHeap.isEmpty()) {
+            const event = morningHeap.pop()
+            const desiredStart = DateTime.fromISO(event.desiredTime).zone(timezone)
+            const intervalsLength = event.intervalsLasting
+            // find desired start date and find events which begin before desiredStart starting from latest to earliest
+            
+            let startInterval = desiredStart.minus({ minutes: 15 })
+            const eventId = null;
+            // find last event that starts prior to a.
+            while (startInterval >= desiredStart.minus({ minutes: desiredStart.hour * 60 + desiredStart.minute })) {
+                const eventQuery = await client.query(`SELECT eventId FROM user_schema_meta.calendars_meta WHERE userId=$1 AND calendarId=$2 AND timeStamp=$3`, 
+                [userId, calendarId, startInterval.toISO()])
+                // decrement event search pointer
+                startInterval = startInterval.minus({ minutes: 15 })
+                if (eventQuery.rows.length === 0) {
+                    continue
+                }
+                eventId = eventQuery.rows[0].eventid
+                break
+            }
+        }
+    }
+
+    
 })
 
 // merge API

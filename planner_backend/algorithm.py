@@ -1,12 +1,79 @@
+import os
+from pathlib import Path
 import datetime as dt
 import numpy as np
-import requests
+import pusher
+from dotenv import load_dotenv
+from flask import Flask, request, jsonify
+
 import time
 from datetime import date
+
 import psycopg2
 from psycopg2.extras import execute_values
 
 plans_length = 64
+
+# Get the current file's path and directory
+current_file = Path(__file__).resolve()
+current_directory = current_file.parent
+
+# Load environment variables from 'development.env' file
+dotenv_path = current_directory / 'development.env'
+load_dotenv(override=True, dotenv_path=dotenv_path)
+
+# pusher_client = pusher.Pusher(
+#   app_id=os.getenv("APP_ID"),
+#   key=os.getenv("KEY"),
+#   secret=os.getenv("SECRET"),
+#   cluster=os.getenv("CLUSTER"),
+#   ssl=True
+# )
+
+# db config
+
+db_params = {
+    'host': os.getenv("HOST"),
+    'database': os.getenv("DATABASE"),
+    'user': os.getenv("USER"),
+    'password': os.getenv("PASSWORD"),
+}
+
+
+app = Flask(__name__)
+
+@app.route("/v1/merge", methods=['POST'])
+def merge_calendars():
+    data = request.get_json()
+    calendarEventsList = []
+    weightsList = []
+    if 'calendarEventsList' in data:
+        calendarEventsList = data['calendarEventsList']
+    if 'weightsList' in data:
+        weightsList = data['weightsList']
+
+    if not (calendarEventsList and weightsList):
+        return jsonify({'error': "Incomplete calendars or weights"}), 400
+
+    conn = psycopg2.connect(**db_params)
+    cursor = conn.cursor()
+    try:
+
+    except psycopg2.Error as e:
+        data
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@app.route("/v1/update", methods=['POST'])
+def update_calendars():
+    data = [{
+        globalEventId: int,
+        desiredStart: str (varchar(26)),
+        intervalsLength: int
+    }, ...]
+    data = request.get_json()
 
 
 class Task:
