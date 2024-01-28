@@ -1,6 +1,6 @@
 class Gap {
 
-    constructor(start = null, end = null, parent = -1) {
+    constructor(start = null, end = null, parent = null) {
         // this.next not needed because it is implicit in LinkedListGaps.js
 
         // By not setting any parameters, we create a dummy object
@@ -8,10 +8,23 @@ class Gap {
         this.start = start
         this.end = end
         this.parent = parent
+        this.event = null
     }
 
-    setParent(parent) {
-        this.parent = parent
+    getStart() {
+        return this.start
+    }
+
+    getEnd() {
+        return this.end
+    }
+    
+    getParent() {
+        return this.parent
+    }
+
+    getEvent() {
+        return this.event
     }
 
     setStart(start) {
@@ -22,16 +35,12 @@ class Gap {
         this.end = end
     }
 
-    getParent() {
-        return this.parent
+    setParent(parent) {
+        this.parent = parent
     }
 
-    getStart() {
-        return this.start
-    }
-
-    getEnd() {
-        return this.end
+    setEvent(event) {
+        this.event = event
     }
 }
 
