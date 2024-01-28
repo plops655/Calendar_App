@@ -1,6 +1,14 @@
+
 class Gap {
 
-    constructor(start = null, end = null, parent = null) {
+    // start and everything else relative to beginning of eventsList!!
+
+    start: number
+    end: number
+    parent: Gap | null
+    event: number | null
+
+    constructor(start = -1, end = -1, parent = null) {
         // this.next not needed because it is implicit in LinkedListGaps.js
 
         // By not setting any parameters, we create a dummy object

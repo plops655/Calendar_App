@@ -275,12 +275,9 @@ class UpdateList {
             }
         }
         // find last event that begins prior to desiredTime and find number of intervals it intersects with desired time.
-        
-    }
 
-    updateForDisplaced(event) {
-        const isImportant = eventIsImportant(event)
-
+    updateForDisplaced(evennt) {
+        const isImportant = this.eventIsImportant(evennt)
     }
 
     updateSubday(subday, subdayHeap, beginInterval) {
